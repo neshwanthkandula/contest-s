@@ -1,10 +1,15 @@
 from app.leaderboard.redis_client import redis_client
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
-from app.models import Leaderboard, Contest, User
+from app.models import Leaderboard, Contest
 
-# Since only ONE contest runs at a time
-LEADERBOARD_KEY = "leaderboard:active"
+# =========================
+# REDIS KEY FACTORY
+# =========================
+
+def leaderboard_key(contest_id: int) -> str:
+    return f"leaderboard:{contest_id}"
+
 
 # =========================
 # CORE HELPERS
@@ -24,7 +29,7 @@ def ensure_contest_exists(contest_id: int, db: Session):
 # REDIS (LIVE LEADERBOARD)
 # =========================
 
-def add_points(user_id: int, username: str, points: int):
+def add_points(contest_id: int, user_id: int, username: str, points: int):
     """
     Redis ZSET member format:
     {user_id}:{username}
@@ -32,15 +37,15 @@ def add_points(user_id: int, username: str, points: int):
     member = f"{user_id}:{username}"
 
     redis_client.zincrby(
-        LEADERBOARD_KEY,
+        leaderboard_key(contest_id),
         points,
         member
     )
 
 
-def get_leaderboard_from_redis():
+def get_leaderboard_from_redis(contest_id: int):
     raw = redis_client.zrevrange(
-        LEADERBOARD_KEY,
+        leaderboard_key(contest_id),
         0,
         -1,
         withscores=True
@@ -61,9 +66,9 @@ def get_leaderboard_from_redis():
     return leaderboard
 
 
-def get_user_rank_from_redis(user_id: int):
+def get_user_rank_from_redis(contest_id: int, user_id: int):
     raw = redis_client.zrevrange(
-        LEADERBOARD_KEY,
+        leaderboard_key(contest_id),
         0,
         -1,
         withscores=True
@@ -83,8 +88,8 @@ def get_user_rank_from_redis(user_id: int):
     return None
 
 
-def reset_leaderboard():
-    redis_client.delete(LEADERBOARD_KEY)
+def reset_leaderboard(contest_id: int):
+    redis_client.delete(leaderboard_key(contest_id))
 
 
 # =========================
@@ -93,13 +98,13 @@ def reset_leaderboard():
 
 def persist_leaderboard(contest_id: int, db: Session):
     raw = redis_client.zrevrange(
-        LEADERBOARD_KEY,
+        leaderboard_key(contest_id),
         0,
         -1,
         withscores=True
     )
 
-    # Clear existing leaderboard for contest (idempotent)
+    # Idempotent delete
     db.query(Leaderboard).filter(
         Leaderboard.contest_id == contest_id
     ).delete()
@@ -187,7 +192,7 @@ def get_leaderboard(contest_id: int, db: Session):
         ]
 
     # Contest running → Redis
-    return get_leaderboard_from_redis()
+    return get_leaderboard_from_redis(contest_id)
 
 
 def get_user_rank(contest_id: int, user_id: int, db: Session):
@@ -210,4 +215,4 @@ def get_user_rank(contest_id: int, user_id: int, db: Session):
             "points": row.total_points,
         }
 
-    return get_user_rank_from_redis(user_id)
+    return get_user_rank_from_redis(contest_id, user_id)
