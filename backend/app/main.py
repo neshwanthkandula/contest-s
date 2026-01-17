@@ -256,7 +256,7 @@ def submit(
     # Add points only if allowed
     if is_correct and not existing and contest_running:
         user = db.query(User).filter(User.id == user_id).first()
-        add_points(user_id, user.username, 50)
+        add_points(payload.contest_id,user_id, user.username, 50)
 
     return {
         "message": "Submission recorded",
